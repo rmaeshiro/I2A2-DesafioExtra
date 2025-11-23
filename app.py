@@ -9,7 +9,6 @@ from langchain_groq import ChatGroq  # usando Groq Llama 3
 from langchain.agents import initialize_agent, AgentType
 from dotenv import load_dotenv
 from langchain.tools import Tool
-from langchain_experimental.tools.python.tool import PythonREPLTool
 from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import HumanMessage, AIMessage  # Novo import necessário
 from io import StringIO
@@ -97,9 +96,6 @@ def python_repl_ast(code: str, df: pd.DataFrame = None):
         sys.stdout = original_stdout
         return f"Erro ao executar o código Python: {e}"
 
-
-# Função do REPL Python com AST, para uso como Tool no LangChain
-python_repl_tool = PythonREPLTool()
 
 # Função que será usada como ferramenta pelo agente
 def python_repl_ast_tool(code: str, df: pd.DataFrame = None) -> str:
