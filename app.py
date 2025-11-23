@@ -136,7 +136,6 @@ def python_repl_ast_tool(code: str, df: pd.DataFrame = None) -> str:
         and cleaned.startswith("df.")
     ):
         # força o modelo a executar uma coisa só por vez
-        # (você pode deixar assim ou não, se quiser)
         parts = [p.strip() for p in cleaned.split(",") if p.strip()]
         cleaned = parts[-1]  # fica só com a última expressão
 
@@ -331,9 +330,10 @@ Se o texto da EDA não contiver informação suficiente, responda exatamente:
     resposta = llm.predict(sub_prompt)
     return resposta
 
-# Cria o Tool do LangChain para usar no agente
+
 def make_memory_tool(memory, llm):
     """
+    (Mantido para possível uso futuro, mas não é usado no fluxo principal.)
     Cria a ferramenta 'buscar_memoria_EDA' que o agente pode chamar.
     """
     def _inner(query: str) -> str:
@@ -348,99 +348,90 @@ def make_memory_tool(memory, llm):
         )
     )
 
-# --- Prefixo Completo para o Agente Principal ---
-prefix_completo = """
+# --- Função para detectar perguntas de RESUMO / CONCLUSÕES da EDA ---
+
+def is_summary_question(text: str) -> bool:
+    """
+    Heurística simples para identificar perguntas que pedem RESUMO ou CONCLUSÕES da EDA,
+    em vez de novos cálculos numéricos ou gráficos.
+    """
+    if not text:
+        return False
+
+    t = text.lower()
+
+    keywords = [
+        "resumo da eda",
+        "resumo da análise exploratória",
+        "resumo da analise exploratoria",
+        "análise exploratória completa",
+        "analise exploratoria completa",
+        "quais as conclusões",
+        "quais conclusoes",
+        "quais as principais conclusões",
+        "quais as principais conclusoes",
+        "o que você observou",
+        "o que voce observou",
+        "conclusões da eda",
+        "conclusoes da eda",
+    ]
+
+    return any(k in t for k in keywords)
+
+# --- Prefixo para o Agente Principal focado em python_repl_ast ---
+
+prefix_python_agent = """
 Você é um especialista em Análise Exploratória de Dados (EDA) para QUALQUER dataset tabular em CSV.
 
-Você tem acesso a DUAS ferramentas:
+Você tem acesso a UMA ferramenta:
 
 1) python_repl_ast
    - Executa código Python usando o DataFrame 'df'.
    - Use para: cálculos numéricos, estatísticas, proporções, contagens, agrupamentos e geração de gráficos.
 
-2) buscar_memoria_EDA
-   - Consulta o texto da EDA inicial salvo na memória.
-   - Use para: resumos, conclusões gerais e interpretações qualitativas do dataset.
+REGRAS GERAIS:
 
-REGRAS OBRIGATÓRIAS PARA python_repl_ast:
+- Sempre que a pergunta envolver números, estatísticas, colunas, tipos de dados OU gráficos,
+  você DEVE chamar a ferramenta python_repl_ast ao menos uma vez.
 
-- SEMPRE que precisar de NÚMEROS, COLUNAS, TIPOS DE DADOS, ESTATÍSTICAS ou GRÁFICOS,
-  use python_repl_ast.
-
-- Antes de usar qualquer coluna, se você não souber os nomes ainda, faça:
+- Antes de usar qualquer coluna, se você não souber os nomes ainda, execute:
   Action: python_repl_ast
   Action Input: df.columns
 
-- NUNCA use nomes genéricos como 'coluna', 'coluna1', etc.
-  Se o usuário não especificar uma coluna:
-  - para perguntas genéricas (ex: "medidas de tendência central do dataset"),
-    use operações em TODAS as colunas numéricas, como:
-      df.describe(include='number')
-      ou df.mean() e df.median()
+- Não invente nomes de colunas. Use apenas nomes que existam em df.columns.
 
-- NÃO chame plt.show() nem plt.savefig() no código.
-  A função python_repl_ast já salva a figura automaticamente se houver gráfico.
+REGRAS PARA GRÁFICOS:
 
-REGRAS OBRIGATÓRIAS PARA buscar_memoria_EDA:
+- Se a pergunta pedir um histograma de uma coluna 'X':
+    - Use SEMPRE o padrão:
 
-- Use buscar_memoria_EDA SOMENTE quando o usuário pedir:
-  - "resumo da análise exploratória",
-  - "quais as conclusões da EDA",
-  - "o que você observou sobre os dados",
-  - ou perguntas conceituais sobre a EDA como um todo.
+      plt.figure(figsize=(10,6))
+      serie = df['X'].dropna()
+      plt.hist(serie, bins=50)
+      plt.title('Histograma da coluna X')
+      plt.xlabel('X')
+      plt.ylabel('Frequência')
 
-- NUNCA use buscar_memoria_EDA apenas para confirmar algo que você acabou de calcular
-  com python_repl_ast.
+- Se a pergunta pedir filtragem entre percentis 1% e 99%:
+      serie = df['X'].dropna()
+      serie = serie[(serie >= serie.quantile(0.01)) & (serie <= serie.quantile(0.99))]
 
-FORMATO DE USO DE FERRAMENTAS (no seu raciocínio):
+- Se a pergunta pedir escala logarítmica no eixo X:
+      plt.xscale('log')
 
-  Action: python_repl_ast
-  Action Input: df.dtypes
+- Nunca use parâmetros estranhos em plt.hist (como `kde=True`).
 
-  Action: buscar_memoria_EDA
-  Action Input: "Resumo da EDA"
+RESPOSTA FINAL:
 
-COMO MONTAR A RESPOSTA FINAL:
-
-- Depois de receber a Observation de uma ferramenta que resolve a pergunta,
-  responda diretamente ao usuário em Português do Brasil.
-
-- Sua resposta NÃO pode ser apenas:
-  "As medidas de tendência central são média e mediana."
-  Você deve sempre:
-  - citar pelo menos 1 ou 2 valores numéricos concretos que apareceram na Observation
-    (por exemplo, média e mediana de uma coluna relevante),
-  - fazer 1 ou 2 frases de interpretação simples do que isso significa para os dados.
-
-- Use parágrafos curtos ou tópicos.
-- Foque na pergunta atual, sem repetir todo o histórico.
-- Se a pergunta for numérica (médias, proporções, etc.),
-  sua resposta final deve ter OBRIGATORIAMENTE:
-  - pelo menos 2 valores numéricos concretos retirados da Observation;
-  - pelo menos 2 frases de interpretação simples sobre esses valores.
-
-- Após usar python_repl_ast para gerar um gráfico ou cálculo,
-  NÃO use nenhuma outra ferramenta.  
-  A próxima saída DEVE ser diretamente a "Final Answer".
-
-- Jamais use a ferramenta buscar_memoria_EDA depois de python_repl_ast.
-
-- Depois de executar uma ferramenta, sua próxima mensagem deve ser
-  EXATAMENTE no formato:
+- Depois de receber a Observation de python_repl_ast, responda diretamente ao usuário em Português do Brasil,
+  usando a palavra-chave:
 
   Final Answer: <texto>
 
-- Não escreva nada antes ou depois, nem explicações.
-SE A PERGUNTA PEDIR UM GRÁFICO:
+- Na resposta final, cite pelo menos 1 ou 2 valores numéricos concretos retornados pela Observation,
+  quando fizer sentido, e faça 1 ou 2 frases de interpretação simples sobre esses valores.
 
-- Você DEVE gerar um gráfico.
-- O código DEVE obrigatoriamente conter:
-    plt.figure(figsize=(10,6))
-    plt.hist(...)
-- Nunca execute apenas describe(), head() ou estatísticas quando o usuário pedir gráfico.
-- Sua resposta deve gerar um gráfico SEMPRE que solicitado.
-
-NUNCA responda sem antes executar python_repl_ast com um comando de plot.
+- Não chame nenhuma outra ferramenta além de python_repl_ast.
 """
 
 # --- Função para Inicialização e Carregamento dos Dados ---
@@ -584,53 +575,65 @@ if df is not None and memory_instance is not None and llm_container.get("llm") i
             if llm is None:
                 st.error("LLM não está inicializado. Recarregue os dados e a análise inicial.")
             else:
-                # Cria ferramentas específicas para este dataset
-                memory_tool = make_memory_tool(memory_instance, llm)
-
-                tools = [
-                    Tool(
-                        name="python_repl_ast",
-                        func=lambda code: python_repl_ast_tool(code, df=df),
-                        description=(
-                            "Use esta ferramenta para executar código Python diretamente no DataFrame 'df'. "
-                            "Ideal para: contagens, proporções, médias, correlações, gráficos, agrupamentos, etc. "
-                            "Sempre que a pergunta envolver números, estatísticas ou visualizações, use esta ferramenta."
+                # Roteamento simples:
+                # - se for pergunta de RESUMO / CONCLUSÕES da EDA → usa diretamente a memória
+                # - caso contrário → usa agente com python_repl_ast
+                if is_summary_question(user_question):
+                    with st.spinner("Consultando o agente (resumo da EDA)..."):
+                        response = smart_memory_lookup_tool(
+                            user_question,
+                            llm=llm,
+                            memory=memory_instance,
                         )
-                    ),
-                    memory_tool
-                ]
 
-                # Inicializa o agente com as ferramentas
-                agent = initialize_agent(
-                    tools,
-                    llm,
-                    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-                    verbose=True,
-                    memory=memory_instance,
-                    handle_parsing_errors=True,   # não tenta “consertar” para sempre
-                    max_iterations=4,              # limite duro de passos
-                    early_stopping_method="generate",
-                )
+                    st.markdown("### Resposta do agente:")
+                    st.write(response)
 
-                # Chama o agente com o prefixo completo + pergunta do usuário
-                full_prompt = f"{prefix_completo}\n\nPergunta do usuário: {user_question}"
-                
-                with st.spinner("Consultando o agente..."):
-                    response = agent.run(full_prompt)
-                
-                st.markdown("### Resposta do agente:")
-                st.write(response)
+                else:
+                    # Cria ferramenta específica para este dataset (apenas python_repl_ast)
+                    tools = [
+                        Tool(
+                            name="python_repl_ast",
+                            func=lambda code: python_repl_ast_tool(code, df=df),
+                            description=(
+                                "Use esta ferramenta para executar código Python diretamente no DataFrame 'df'. "
+                                "Ideal para: contagens, proporções, médias, correlações, gráficos, agrupamentos, etc. "
+                                "Sempre que a pergunta envolver números, estatísticas ou visualizações, use esta ferramenta."
+                            )
+                        )
+                    ]
 
-                # Após a chamada do agente, verifica se um gráfico foi salvo
-                TEMP_PLOT_PATH = "temp_plot.png"  # Recria a constante para este escopo
+                    # Inicializa o agente com a ferramenta python_repl_ast
+                    agent = initialize_agent(
+                        tools,
+                        llm,
+                        agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+                        verbose=True,
+                        memory=memory_instance,
+                        handle_parsing_errors=True,   # não tenta “consertar” para sempre
+                        max_iterations=4,              # limite duro de passos
+                        early_stopping_method="generate",
+                    )
 
-                if os.path.exists(TEMP_PLOT_PATH):
-                    st.subheader("Visualização Gerada:")
+                    # Chama o agente com o prefixo de instruções + pergunta do usuário
+                    full_prompt = f"{prefix_python_agent}\n\nPergunta do usuário: {user_question}"
                     
-                    # Exibe a imagem salva no disco
-                    st.image(TEMP_PLOT_PATH)
+                    with st.spinner("Consultando o agente..."):
+                        response = agent.run(full_prompt)
                     
-                    # Opcional: Remova o arquivo para que a próxima execução não pegue o gráfico antigo
-                    os.remove(TEMP_PLOT_PATH) 
+                    st.markdown("### Resposta do agente:")
+                    st.write(response)
+
+                    # Após a chamada do agente, verifica se um gráfico foi salvo
+                    TEMP_PLOT_PATH = "temp_plot.png"  # Recria a constante para este escopo
+
+                    if os.path.exists(TEMP_PLOT_PATH):
+                        st.subheader("Visualização Gerada:")
+                        
+                        # Exibe a imagem salva no disco
+                        st.image(TEMP_PLOT_PATH)
+                        
+                        # Opcional: Remova o arquivo para que a próxima execução não pegue o gráfico antigo
+                        os.remove(TEMP_PLOT_PATH)
 else:
     st.info("Por favor, carregue um arquivo CSV e insira sua chave da API para começar.")
