@@ -4,11 +4,10 @@ import os
 import io
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 from langchain_groq import ChatGroq  # usando Groq Llama 3
-from langchain.agents.agent_types import AgentType
+from langchain.agents import initialize_agent, AgentType
 from dotenv import load_dotenv
-from langchain.agents import AgentType
-from langchain.agents import initialize_agent
 from langchain.tools import Tool
 from langchain_experimental.tools.python.tool import PythonREPLTool
 from langchain.memory import ConversationBufferMemory
