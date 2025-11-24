@@ -283,15 +283,31 @@ load_dotenv()
 def get_groq_api_key() -> str:
     """
     Prioridade:
-    1) st.secrets["GROQ_API_KEY"]  (Streamlit Cloud ou secrets.toml local)
+    1) st.secrets["GROQ_API_KEY"]  (quando existir secrets.toml)
     2) Variável de ambiente / .env (GROQ_API_KEY)
     """
-    # Streamlit Cloud / secrets
-    if "GROQ_API_KEY" in st.secrets:
-        return st.secrets["GROQ_API_KEY"]
 
-    # Ambiente local (.env ou export GROQ_API_KEY=...)
+    # Caminhos onde o Streamlit procura o secrets.toml
+    possible_paths = [
+        os.path.join(os.path.expanduser("~"), ".streamlit", "secrets.toml"),
+        os.path.join(os.getcwd(), ".streamlit", "secrets.toml"),
+    ]
+
+    has_secrets_file = any(os.path.exists(p) for p in possible_paths)
+
+    # Só tenta acessar st.secrets se o arquivo realmente existir
+    if has_secrets_file:
+        try:
+            # .get evita KeyError se a chave não existir
+            return st.secrets.get("GROQ_API_KEY", "")
+        except Exception:
+            # Qualquer problema aqui, cai para o .env
+            pass
+
+    # Se não tiver secrets.toml ou não tiver a chave lá, usa o .env / variáveis de ambiente
+    load_dotenv()
     return os.getenv("GROQ_API_KEY", "")
+
 # ---------------------------------------------------------------------------
 # Funções auxiliares: execução de código Python com acesso ao df
 # ---------------------------------------------------------------------------
