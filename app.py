@@ -280,6 +280,18 @@ def inject_dark_cyan_blade_theme():
 # ---------------------------------------------------------------------------
 load_dotenv()
 
+def get_groq_api_key() -> str:
+    """
+    Prioridade:
+    1) st.secrets["GROQ_API_KEY"]  (Streamlit Cloud ou secrets.toml local)
+    2) Variável de ambiente / .env (GROQ_API_KEY)
+    """
+    # Streamlit Cloud / secrets
+    if "GROQ_API_KEY" in st.secrets:
+        return st.secrets["GROQ_API_KEY"]
+
+    # Ambiente local (.env ou export GROQ_API_KEY=...)
+    return os.getenv("GROQ_API_KEY", "")
 # ---------------------------------------------------------------------------
 # Funções auxiliares: execução de código Python com acesso ao df
 # ---------------------------------------------------------------------------
@@ -753,11 +765,18 @@ st.sidebar.header("🎛️ Painel de Controle")
 
 uploaded_file = st.sidebar.file_uploader("Selecione um arquivo CSV", type=["csv"])
 
-api_key = st.sidebar.text_input(
-    "Chave Groq API",
-    type="password",
-    value=os.getenv("GROQ_API_KEY", "")
-)
+# Tenta pegar automaticamente (secrets no Cloud ou .env/local)
+default_key = get_groq_api_key()
+
+if default_key:
+    api_key = default_key
+    st.sidebar.caption("Usando a chave Groq configurada no ambiente.")
+else:
+    api_key = st.sidebar.text_input(
+        "Chave Groq API",
+        type="password",
+        help="Informe apenas se a chave não estiver configurada no ambiente."
+    )
 
 if st.sidebar.button("Carregar e analisar arquivo"):
     with st.spinner("Carregando dados e executando análise inicial..."):
